@@ -1,51 +1,348 @@
 import { HttpClient } from '@angular/common/http';
-import { Component, inject } from '@angular/core';
-import { NgFor, JsonPipe } from '@angular/common';
+import { Component, computed, inject, OnInit, signal } from '@angular/core';
+import { NgFor, NgIf } from '@angular/common';
+import { ScenarioSelectorComponent } from './components/scenario-selector/scenario-selector.component';
+import { StatusItemComponent } from './components/status-item/status-item.component';
+import { MetricCardComponent } from './components/metric-card/metric-card.component';
+import { ChartPanelComponent } from './components/chart-panel/chart-panel.component';
+import { ChartItem, MetricItem, ScenarioOption, SystemStatusItem } from './models/dashboard.model';
 
-type Demo = {
-    name: string;
-    endpoint: string;
+type BaselineApiResponse = {
+    scenario: 'baseline';
+    processingTimeMs: number;
+    timestamp: string;
+    metrics: {
+        requestCount: number;
+        throughput: number;
+        p50: number;
+        p95: number;
+        p99: number;
+        averageLatencyMs: number;
+    };
+};
+
+type QueueApiResponse = {
+    scenario: 'queue-buildup';
+    config: {
+        arrivalRate: number;
+        processingCapacity: number;
+        workers: number;
+        durationSeconds: number;
+    };
+    metrics: {
+        queue_size: number;
+        active_workers: number;
+        waiting_requests: number;
+        processing_time: number;
+        waiting_time: number;
+        total_latency: number;
+        throughput: number;
+        p50: number;
+        p95: number;
+        p99: number;
+        request_count: number;
+    };
+    timeline: {
+        incoming: number[];
+        queueSize: number[];
+        activeWorkers: number[];
+    };
+    explanation: string;
+    timestamp: string;
 };
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [NgFor, JsonPipe],
+    imports: [NgFor, NgIf, ScenarioSelectorComponent, StatusItemComponent, MetricCardComponent, ChartPanelComponent],
     templateUrl: './app.component.html',
     styleUrls: ['./app.component.css'],
 })
-export class AppComponent {
+export class AppComponent implements OnInit {
     private readonly http = inject(HttpClient);
+    private queueAnimationTimer: ReturnType<typeof setInterval> | null = null;
 
     readonly title = 'Performance Engineering Lab';
-    readonly demos: Demo[] = [
-        { name: 'CPU Latency', endpoint: '/api/lab/cpu?ms=120' },
-        { name: 'Injected Latency', endpoint: '/api/lab/latency?ms=200' },
-        { name: 'Queue Buildup', endpoint: '/api/lab/queue?jobs=100&workers=6' },
-        { name: 'Amdahl Law', endpoint: '/api/lab/scaling/amdahl?p=0.92&n=8' },
-        { name: 'USL', endpoint: '/api/lab/scaling/usl?n=16&alpha=0.03&beta=0.01' },
-        { name: 'DB Indexing On', endpoint: '/api/lab/db/indexing?indexed=true' },
-        { name: 'Cache Demo', endpoint: '/api/lab/cache/demo?key=student-42' },
-        { name: 'Lock Contention', endpoint: '/api/lab/locks/contention?threads=16' },
-    ];
 
-    output: unknown = { info: 'Run a demo to see response...' };
-    loading = false;
+    readonly scenarios = signal<ScenarioOption[]>([
+        { id: 'baseline', label: 'Baseline', enabled: true },
+        { id: 'queue-buildup', label: 'Queue Buildup', enabled: true },
+        { id: 'cpu-latency', label: 'CPU Latency', enabled: false },
+        { id: 'network-latency', label: 'Network Latency', enabled: false },
+        { id: 'disk-latency', label: 'Disk Latency', enabled: false },
+        { id: 'memory-latency', label: 'Memory Latency', enabled: false },
+        { id: 'database-index', label: 'Database Index', enabled: false },
+        { id: 'caching', label: 'Caching', enabled: false },
+        { id: 'concurrency', label: 'Concurrency', enabled: false },
+        { id: 'lock-contention', label: 'Lock Contention', enabled: false },
+        { id: 'cas', label: 'CAS', enabled: false },
+        { id: 'deadlock', label: 'Deadlock', enabled: false },
+        { id: 'amdahl', label: "Amdahl's Law", enabled: false },
+        { id: 'usl', label: 'Universal Scalability Law', enabled: false },
+        { id: 'capacity', label: 'Capacity', enabled: false },
+    ]);
 
-    run(demo: Demo): void {
-        this.loading = true;
-        this.http.get(demo.endpoint).subscribe({
-            next: (res: unknown) => {
-                this.output = { demo: demo.name, response: res };
-                this.loading = false;
+    readonly selectedScenarioId = signal('baseline');
+    readonly selectedScenario = computed(
+        () => this.scenarios().find((s) => s.id === this.selectedScenarioId()) ?? this.scenarios()[0],
+    );
+    readonly isComingSoon = computed(() => !this.selectedScenario().enabled);
+    readonly isBaselineSelected = computed(() => this.selectedScenarioId() === 'baseline');
+    readonly isQueueScenarioSelected = computed(() => this.selectedScenarioId() === 'queue-buildup');
+
+    readonly systemStatus = signal<SystemStatusItem[]>([
+        { label: 'Backend', healthy: true },
+        { label: 'PostgreSQL', healthy: true },
+        { label: 'Redis', healthy: true },
+    ]);
+
+    readonly metrics = signal<MetricItem[]>([
+        { label: 'Requests/sec', value: '-' },
+        { label: 'p50', value: '-' },
+        { label: 'p95', value: '-' },
+        { label: 'p99', value: '-' },
+        { label: 'Average latency', value: '-' },
+    ]);
+
+    readonly baselineInfo = signal<{ processingTimeMs: number; timestamp: string } | null>(null);
+    readonly queueInfo = signal<{ timestamp: string; explanation: string } | null>(null);
+    readonly runInProgress = signal(false);
+
+    readonly arrivalRate = signal(80);
+    readonly processingCapacity = signal(12);
+    readonly workerCount = signal(2);
+
+    readonly queueLiveSize = signal(0);
+    readonly queueLiveWorkers = signal(0);
+    readonly queueLiveIncoming = signal(0);
+    readonly queueFillRatio = signal(0);
+
+    readonly charts = signal<ChartItem[]>([
+        { title: 'Latency', subtitle: 'Simple baseline trend', points: [25, 35, 40, 48, 42, 52, 46, 50] },
+        { title: 'Throughput', subtitle: 'Requests per second trend', points: [30, 36, 43, 50, 57, 54, 60, 62] },
+        { title: 'Queue Size', subtitle: 'In-flight queue depth', points: [10, 12, 15, 18, 14, 16, 12, 9] },
+    ]);
+
+    ngOnInit(): void {
+        this.http.get<{ status?: string; postgres?: string; redis?: string }>('/api/health').subscribe({
+            next: (res) => {
+                const backendUp = res.status === 'ok';
+                const postgresUp = res.postgres ? res.postgres === 'up' : backendUp;
+                const redisUp = res.redis ? res.redis === 'up' : backendUp;
+
+                this.systemStatus.set([
+                    { label: 'Backend', healthy: backendUp },
+                    { label: 'PostgreSQL', healthy: postgresUp },
+                    { label: 'Redis', healthy: redisUp },
+                ]);
             },
-            error: (err: { message?: string } | unknown) => {
-                const message = typeof err === 'object' && err !== null && 'message' in err
-                    ? String((err as { message?: string }).message)
-                    : String(err);
-                this.output = { demo: demo.name, error: message };
-                this.loading = false;
+            error: () => {
+                this.systemStatus.set([
+                    { label: 'Backend', healthy: false },
+                    { label: 'PostgreSQL', healthy: false },
+                    { label: 'Redis', healthy: false },
+                ]);
             },
         });
+    }
+
+    onScenarioChange(id: string): void {
+        this.selectedScenarioId.set(id);
+        if (id === 'baseline') {
+            this.metrics.set([
+                { label: 'Requests/sec', value: '-' },
+                { label: 'p50', value: '-' },
+                { label: 'p95', value: '-' },
+                { label: 'p99', value: '-' },
+                { label: 'Average latency', value: '-' },
+            ]);
+        }
+
+        if (id === 'queue-buildup') {
+            this.metrics.set([
+                { label: 'Queue Size', value: '-' },
+                { label: 'Active Workers', value: '-' },
+                { label: 'Throughput', value: '-' },
+                { label: 'p50', value: '-' },
+                { label: 'p95', value: '-' },
+                { label: 'p99', value: '-' },
+                { label: 'Waiting Time', value: '-' },
+                { label: 'Processing Time', value: '-' },
+            ]);
+        }
+    }
+
+    runBaselineTest(): void {
+        if (!this.isBaselineSelected()) {
+            return;
+        }
+
+        this.runInProgress.set(true);
+        this.http.get<BaselineApiResponse>('/api/performance/baseline').subscribe({
+            next: (res) => {
+                this.metrics.set([
+                    { label: 'Requests/sec', value: String(res.metrics.throughput) },
+                    { label: 'p50', value: `${res.metrics.p50} ms` },
+                    { label: 'p95', value: `${res.metrics.p95} ms` },
+                    { label: 'p99', value: `${res.metrics.p99} ms` },
+                    { label: 'Average latency', value: `${res.metrics.averageLatencyMs} ms` },
+                ]);
+                this.baselineInfo.set({
+                    processingTimeMs: res.processingTimeMs,
+                    timestamp: res.timestamp,
+                });
+                this.runInProgress.set(false);
+            },
+            error: () => {
+                this.metrics.set([
+                    { label: 'Requests/sec', value: 'N/A' },
+                    { label: 'p50', value: 'N/A' },
+                    { label: 'p95', value: 'N/A' },
+                    { label: 'p99', value: 'N/A' },
+                    { label: 'Average latency', value: 'N/A' },
+                ]);
+                this.runInProgress.set(false);
+            },
+        });
+    }
+
+    runQueueTest(): void {
+        if (!this.isQueueScenarioSelected()) {
+            return;
+        }
+
+        this.clearQueueAnimation();
+        this.runInProgress.set(true);
+
+        const url =
+            `/api/performance/queue?arrivalRate=${this.arrivalRate()}` +
+            `&processingCapacity=${this.processingCapacity()}` +
+            `&workers=${this.workerCount()}`;
+
+        this.http.get<QueueApiResponse>(url).subscribe({
+            next: (res) => {
+                this.metrics.set([
+                    { label: 'Queue Size', value: String(res.metrics.queue_size) },
+                    { label: 'Active Workers', value: String(res.metrics.active_workers) },
+                    { label: 'Throughput', value: `${res.metrics.throughput} req/s` },
+                    { label: 'p50', value: `${res.metrics.p50} ms` },
+                    { label: 'p95', value: `${res.metrics.p95} ms` },
+                    { label: 'p99', value: `${res.metrics.p99} ms` },
+                    { label: 'Waiting Time', value: `${res.metrics.waiting_time} ms` },
+                    { label: 'Processing Time', value: `${res.metrics.processing_time} ms` },
+                ]);
+
+                this.queueInfo.set({
+                    timestamp: res.timestamp,
+                    explanation: res.explanation,
+                });
+
+                const queuePoints = this.normalizeForChart(res.timeline.queueSize);
+                const throughputPoints = this.normalizeForChart(
+                    res.timeline.activeWorkers.map((workers) => workers * res.config.processingCapacity),
+                );
+                const waitingPoints = this.normalizeForChart(
+                    res.timeline.queueSize.map((q) => q * (1000 / res.config.processingCapacity)),
+                );
+
+                this.charts.set([
+                    { title: 'Queue Size', subtitle: 'Queue growth over simulation', points: queuePoints },
+                    { title: 'Throughput', subtitle: 'Estimated processing rate', points: throughputPoints },
+                    { title: 'Waiting Time', subtitle: 'Queue-induced waiting trend', points: waitingPoints },
+                ]);
+
+                this.animateQueue(res.timeline.queueSize, res.timeline.activeWorkers, res.timeline.incoming);
+                this.runInProgress.set(false);
+            },
+            error: () => {
+                this.metrics.set([
+                    { label: 'Queue Size', value: 'N/A' },
+                    { label: 'Active Workers', value: 'N/A' },
+                    { label: 'Throughput', value: 'N/A' },
+                    { label: 'p50', value: 'N/A' },
+                    { label: 'p95', value: 'N/A' },
+                    { label: 'p99', value: 'N/A' },
+                    { label: 'Waiting Time', value: 'N/A' },
+                    { label: 'Processing Time', value: 'N/A' },
+                ]);
+                this.runInProgress.set(false);
+            },
+        });
+    }
+
+    setArrivalRate(value: string): void {
+        this.arrivalRate.set(this.parsePositiveInt(value, 80));
+    }
+
+    setProcessingCapacity(value: string): void {
+        this.processingCapacity.set(this.parsePositiveInt(value, 12));
+    }
+
+    setWorkerCount(value: string): void {
+        this.workerCount.set(this.parsePositiveInt(value, 2));
+    }
+
+    private animateQueue(queue: number[], workers: number[], incoming: number[]): void {
+        if (queue.length === 0) {
+            this.queueLiveSize.set(0);
+            this.queueLiveWorkers.set(0);
+            this.queueLiveIncoming.set(0);
+            this.queueFillRatio.set(0);
+            return;
+        }
+
+        const maxQueue = Math.max(...queue, 1);
+        let index = 0;
+
+        this.queueAnimationTimer = setInterval(() => {
+            const q = queue[index] ?? queue[queue.length - 1];
+            const w = workers[index] ?? workers[workers.length - 1];
+            const inReq = incoming[index] ?? incoming[incoming.length - 1];
+
+            this.queueLiveSize.set(q);
+            this.queueLiveWorkers.set(w);
+            this.queueLiveIncoming.set(inReq);
+            this.queueFillRatio.set(Math.min(100, Math.round((q / maxQueue) * 100)));
+
+            index += 1;
+            if (index >= queue.length) {
+                this.clearQueueAnimation();
+            }
+        }, 120);
+    }
+
+    private clearQueueAnimation(): void {
+        if (this.queueAnimationTimer) {
+            clearInterval(this.queueAnimationTimer);
+            this.queueAnimationTimer = null;
+        }
+    }
+
+    private normalizeForChart(values: number[]): number[] {
+        if (values.length === 0) {
+            return [0];
+        }
+        const sampleSize = Math.min(values.length, 8);
+        const bucketSize = Math.max(1, Math.floor(values.length / sampleSize));
+        const sampled: number[] = [];
+
+        for (let i = 0; i < values.length && sampled.length < sampleSize; i += bucketSize) {
+            sampled.push(values[i]);
+        }
+
+        while (sampled.length < sampleSize) {
+            sampled.push(sampled[sampled.length - 1] ?? 0);
+        }
+
+        const maxValue = Math.max(...sampled, 1);
+        return sampled.map((value) => Math.max(4, Math.round((value / maxValue) * 100)));
+    }
+
+    private parsePositiveInt(value: string, fallback: number): number {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            return fallback;
+        }
+        return Math.floor(parsed);
     }
 }

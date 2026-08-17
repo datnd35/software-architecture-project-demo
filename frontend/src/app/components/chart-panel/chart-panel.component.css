@@ -1,0 +1,31 @@
+.chart-card {
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  padding: 1rem;
+  background: #fff;
+}
+
+h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+p {
+  margin: 0.25rem 0 0.9rem;
+  color: #71717a;
+  font-size: 0.86rem;
+}
+
+.bars {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  align-items: end;
+  gap: 0.4rem;
+  height: 120px;
+}
+
+.bar {
+  background: linear-gradient(180deg, #4f46e5 0%, #818cf8 100%);
+  border-radius: 6px 6px 3px 3px;
+  min-height: 8px;
+}

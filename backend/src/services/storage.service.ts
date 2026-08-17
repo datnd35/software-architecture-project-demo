@@ -6,6 +6,7 @@ import Redis from 'ioredis';
 export class StorageService {
     private readonly pool: Pool;
     private readonly redis: Redis;
+    private redisConnected = false;
 
     constructor() {
         this.pool = new Pool({
@@ -23,6 +24,29 @@ export class StorageService {
             lazyConnect: true,
             maxRetriesPerRequest: 1,
         });
+    }
+
+    async checkPostgres(): Promise<boolean> {
+        try {
+            await this.pool.query('SELECT 1');
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async checkRedis(): Promise<boolean> {
+        try {
+            if (!this.redisConnected) {
+                await this.redis.connect();
+                this.redisConnected = true;
+            }
+            const pong = await this.redis.ping();
+            return pong === 'PONG';
+        } catch {
+            this.redisConnected = false;
+            return false;
+        }
     }
 
     async dbIndexing(indexed: boolean): Promise<{ indexed: boolean; elapsedMs: number; ok: boolean; details: string }> {
@@ -50,7 +74,10 @@ export class StorageService {
     async cacheDemo(key: string): Promise<{ key: string; hit: boolean; value: string; elapsedMs: number; details: string }> {
         const started = performance.now();
         try {
-            await this.redis.connect();
+            if (!this.redisConnected) {
+                await this.redis.connect();
+                this.redisConnected = true;
+            }
             const existing = await this.redis.get(key);
             if (existing) {
                 const elapsedMs = Math.round((performance.now() - started) * 100) / 100;
@@ -61,6 +88,7 @@ export class StorageService {
             const elapsedMs = Math.round((performance.now() - started) * 100) / 100;
             return { key, hit: false, value, elapsedMs, details: 'cache miss -> value computed and cached' };
         } catch (error) {
+            this.redisConnected = false;
             const elapsedMs = Math.round((performance.now() - started) * 100) / 100;
             return { key, hit: false, value: 'unavailable', elapsedMs, details: `redis unavailable: ${(error as Error).message}` };
         }

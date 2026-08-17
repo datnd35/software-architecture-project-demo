@@ -1,0 +1,15 @@
+.selector-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.selector {
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid #d4d4d8;
+  border-radius: 10px;
+  padding: 0.625rem 0.75rem;
+  background: #fff;
+  color: #18181b;
+}

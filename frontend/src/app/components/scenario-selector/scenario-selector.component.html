@@ -1,0 +1,6 @@
+<label class="selector-label" for="scenario-select">Scenario</label>
+<select id="scenario-select" class="selector" [value]="selectedId()" (change)="onChange($any($event.target).value)">
+    <option *ngFor="let option of options()" [value]="option.id">
+        {{ option.label }}{{ option.enabled ? '' : ' (Coming soon)' }}
+    </option>
+</select>

@@ -1,18 +1,18 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { Response } from 'express';
-import { MetricsService } from '../services/metrics.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { HealthService } from '../services/health.service';
 
 @Controller()
 export class AppController {
-    constructor(private readonly metricsService: MetricsService) { }
+    constructor(
+        private readonly metricsService: MetricsService,
+        private readonly healthService: HealthService,
+    ) { }
 
     @Get('health')
     health() {
-        return {
-            status: 'ok',
-            service: 'performance-engineering-lab-backend',
-            ts: new Date().toISOString(),
-        };
+        return this.healthService.check();
     }
 
     @Get('metrics')

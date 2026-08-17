@@ -1,19 +1,92 @@
-<main class="container">
-    <h1>{{ title }}</h1>
+<main class="dashboard">
+    <header class="header">
+        <h1>{{ title }}</h1>
+    </header>
 
-    <p>
-        Educational playground for efficiency, latency, throughput, queue buildup,
-        indexing, caching, lock contention, CAS, Amdahl's Law, and USL.
-    </p>
-
-    <section class="grid">
-        <button *ngFor="let demo of demos" (click)="run(demo)">
-            Run {{ demo.name }}
-        </button>
+    <section class="panel">
+        <h2>System Status</h2>
+        <div class="status-list">
+            <app-status-item *ngFor="let item of systemStatus()" [label]="item.label"
+                [healthy]="item.healthy"></app-status-item>
+        </div>
     </section>
 
-    <section class="output">
-        <h2>Latest output {{ loading ? '(running...)' : '' }}</h2>
-        <pre>{{ output | json }}</pre>
+    <section class="panel">
+        <app-scenario-selector [options]="scenarios()" [selectedId]="selectedScenarioId()"
+            (selectedChange)="onScenarioChange($event)"></app-scenario-selector>
+        <p *ngIf="isComingSoon()" class="coming-soon">Coming soon</p>
+
+        <div *ngIf="isBaselineSelected()" class="baseline-info">
+            <h3>Scenario: Baseline</h3>
+            <p>This represents a healthy system with minimal processing overhead.</p>
+            <button class="run-btn" (click)="runBaselineTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+            <p *ngIf="baselineInfo()" class="meta">
+                Last run: {{ baselineInfo()?.timestamp }} · processingTimeMs: {{ baselineInfo()?.processingTimeMs }}
+            </p>
+        </div>
+
+        <div *ngIf="isQueueScenarioSelected()" class="queue-info">
+            <h3>Scenario: Queue Buildup</h3>
+
+            <div class="control-grid">
+                <label>
+                    Arrival Rate
+                    <input type="number" [value]="arrivalRate()" min="1"
+                        (input)="setArrivalRate($any($event.target).value)" />
+                </label>
+
+                <label>
+                    Processing Capacity
+                    <input type="number" [value]="processingCapacity()" min="1"
+                        (input)="setProcessingCapacity($any($event.target).value)" />
+                </label>
+
+                <label>
+                    Workers
+                    <input type="number" [value]="workerCount()" min="1"
+                        (input)="setWorkerCount($any($event.target).value)" />
+                </label>
+            </div>
+
+            <button class="run-btn" (click)="runQueueTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+
+            <div class="queue-visualization">
+                <div class="incoming">Incoming Requests: {{ queueLiveIncoming() }}</div>
+                <div class="arrow">↓</div>
+                <div class="queue-box">
+                    <div class="queue-fill" [style.width.%]="queueFillRatio()"></div>
+                    <div class="queue-label">Queue Size: {{ queueLiveSize() }}</div>
+                </div>
+                <div class="arrow">↓</div>
+                <div class="workers">Workers Active: {{ queueLiveWorkers() }}</div>
+            </div>
+
+            <p class="queue-explanation">
+                If incoming requests arrive faster than the system can process them,
+                the queue grows and waiting time becomes the dominant part of latency.
+            </p>
+
+            <p *ngIf="queueInfo()" class="meta">Last run: {{ queueInfo()?.timestamp }}</p>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Metrics</h2>
+        <div class="metric-grid">
+            <app-metric-card *ngFor="let metric of metrics()" [label]="metric.label"
+                [value]="metric.value"></app-metric-card>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Charts</h2>
+        <div class="chart-grid">
+            <app-chart-panel *ngFor="let chart of charts()" [title]="chart.title" [subtitle]="chart.subtitle"
+                [points]="chart.points"></app-chart-panel>
+        </div>
     </section>
 </main>

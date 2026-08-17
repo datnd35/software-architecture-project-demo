@@ -1,0 +1,6 @@
+<div class="status-row">
+    <span class="label">{{ label() }}</span>
+    <span class="indicator" [class.ok]="healthy()" [class.bad]="!healthy()">
+        {{ healthy() ? '✓' : '✕' }}
+    </span>
+</div>

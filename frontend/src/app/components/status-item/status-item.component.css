@@ -1,0 +1,27 @@
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.2rem;
+  border-bottom: 1px dashed #e4e4e7;
+}
+
+.status-row:last-child {
+  border-bottom: 0;
+}
+
+.label {
+  font-weight: 500;
+}
+
+.indicator {
+  font-weight: 700;
+}
+
+.ok {
+  color: #16a34a;
+}
+
+.bad {
+  color: #dc2626;
+}

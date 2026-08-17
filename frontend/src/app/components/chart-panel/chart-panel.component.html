@@ -1,0 +1,10 @@
+<article class="chart-card">
+    <header>
+        <h3>{{ title() }}</h3>
+        <p>{{ subtitle() }}</p>
+    </header>
+
+    <div class="bars">
+        <div class="bar" *ngFor="let point of points()" [style.height.%]="point" [title]="point + '%'"></div>
+    </div>
+</article>
