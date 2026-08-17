@@ -51,6 +51,23 @@ type QueueApiResponse = {
     timestamp: string;
 };
 
+type ScenarioCoreResponse = {
+    scenario: string;
+    processingTime: number;
+    totalLatency: number;
+    throughput: number;
+    cpu: {
+        userMs: number;
+        systemMs: number;
+        totalMs: number;
+    };
+    memory: {
+        rssMb: number;
+        heapUsedMb: number;
+    };
+    timestamp: string;
+};
+
 @Component({
     selector: 'app-root',
     standalone: true,
@@ -67,10 +84,10 @@ export class AppComponent implements OnInit {
     readonly scenarios = signal<ScenarioOption[]>([
         { id: 'baseline', label: 'Baseline', enabled: true },
         { id: 'queue-buildup', label: 'Queue Buildup', enabled: true },
-        { id: 'cpu-latency', label: 'CPU Latency', enabled: false },
-        { id: 'network-latency', label: 'Network Latency', enabled: false },
-        { id: 'disk-latency', label: 'Disk Latency', enabled: false },
-        { id: 'memory-latency', label: 'Memory Latency', enabled: false },
+        { id: 'cpu-latency', label: 'CPU Latency', enabled: true },
+        { id: 'network-latency', label: 'Network Latency', enabled: true },
+        { id: 'disk-latency', label: 'Disk Latency', enabled: true },
+        { id: 'memory-latency', label: 'Memory Latency', enabled: true },
         { id: 'database-index', label: 'Database Index', enabled: false },
         { id: 'caching', label: 'Caching', enabled: false },
         { id: 'concurrency', label: 'Concurrency', enabled: false },
@@ -89,6 +106,10 @@ export class AppComponent implements OnInit {
     readonly isComingSoon = computed(() => !this.selectedScenario().enabled);
     readonly isBaselineSelected = computed(() => this.selectedScenarioId() === 'baseline');
     readonly isQueueScenarioSelected = computed(() => this.selectedScenarioId() === 'queue-buildup');
+    readonly isCpuScenarioSelected = computed(() => this.selectedScenarioId() === 'cpu-latency');
+    readonly isNetworkScenarioSelected = computed(() => this.selectedScenarioId() === 'network-latency');
+    readonly isDiskScenarioSelected = computed(() => this.selectedScenarioId() === 'disk-latency');
+    readonly isMemoryScenarioSelected = computed(() => this.selectedScenarioId() === 'memory-latency');
 
     readonly systemStatus = signal<SystemStatusItem[]>([
         { label: 'Backend', healthy: true },
@@ -107,6 +128,12 @@ export class AppComponent implements OnInit {
     readonly baselineInfo = signal<{ processingTimeMs: number; timestamp: string } | null>(null);
     readonly queueInfo = signal<{ timestamp: string; explanation: string } | null>(null);
     readonly runInProgress = signal(false);
+    readonly scenarioInfo = signal<{ title: string; text: string; timestamp: string } | null>(null);
+
+    readonly cpuLevel = signal<'light' | 'medium' | 'heavy' | 'extreme'>('light');
+    readonly networkDelay = signal(200);
+    readonly diskSize = signal<'small' | 'medium' | 'large'>('medium');
+    readonly memoryWorkload = signal<'small' | 'medium' | 'large'>('medium');
 
     readonly arrivalRate = signal(80);
     readonly processingCapacity = signal(12);
@@ -148,6 +175,7 @@ export class AppComponent implements OnInit {
 
     onScenarioChange(id: string): void {
         this.selectedScenarioId.set(id);
+        this.scenarioInfo.set(null);
         if (id === 'baseline') {
             this.metrics.set([
                 { label: 'Requests/sec', value: '-' },
@@ -168,6 +196,16 @@ export class AppComponent implements OnInit {
                 { label: 'p99', value: '-' },
                 { label: 'Waiting Time', value: '-' },
                 { label: 'Processing Time', value: '-' },
+            ]);
+        }
+
+        if (id === 'cpu-latency' || id === 'network-latency' || id === 'disk-latency' || id === 'memory-latency') {
+            this.metrics.set([
+                { label: 'Processing Time', value: '-' },
+                { label: 'Total Latency', value: '-' },
+                { label: 'Throughput', value: '-' },
+                { label: 'CPU', value: '-' },
+                { label: 'Memory', value: '-' },
             ]);
         }
     }
@@ -270,6 +308,124 @@ export class AppComponent implements OnInit {
         });
     }
 
+    runCpuTest(): void {
+        if (!this.isCpuScenarioSelected()) {
+            return;
+        }
+        this.runInProgress.set(true);
+        this.http.get<ScenarioCoreResponse & { level: string }>(`/api/performance/cpu?level=${this.cpuLevel()}`).subscribe({
+            next: (res) => {
+                this.applyCoreMetrics(res);
+                this.scenarioInfo.set({
+                    title: 'CPU Latency',
+                    text: 'CPU workload increases processing time as compute intensity rises.',
+                    timestamp: res.timestamp,
+                });
+                this.runInProgress.set(false);
+            },
+            error: () => {
+                this.applyUnavailableCoreMetrics();
+                this.runInProgress.set(false);
+            },
+        });
+    }
+
+    runNetworkTest(): void {
+        if (!this.isNetworkScenarioSelected()) {
+            return;
+        }
+        this.runInProgress.set(true);
+        this.http
+            .get<ScenarioCoreResponse & { delay: number }>(`/api/performance/network?delay=${this.networkDelay()}`)
+            .subscribe({
+                next: (res) => {
+                    this.applyCoreMetrics(res);
+                    this.scenarioInfo.set({
+                        title: 'Network Latency',
+                        text: 'Artificial delay is injected to simulate network transit and downstream waiting.',
+                        timestamp: res.timestamp,
+                    });
+                    this.runInProgress.set(false);
+                },
+                error: () => {
+                    this.applyUnavailableCoreMetrics();
+                    this.runInProgress.set(false);
+                },
+            });
+    }
+
+    runDiskTest(): void {
+        if (!this.isDiskScenarioSelected()) {
+            return;
+        }
+        this.runInProgress.set(true);
+        this.http
+            .get<ScenarioCoreResponse & { size: string }>(`/api/performance/disk?size=${this.diskSize()}`)
+            .subscribe({
+                next: (res) => {
+                    this.applyCoreMetrics(res);
+                    this.scenarioInfo.set({
+                        title: 'Disk Latency',
+                        text: 'Temporary file write/read cost is measured to model storage latency.',
+                        timestamp: res.timestamp,
+                    });
+                    this.runInProgress.set(false);
+                },
+                error: () => {
+                    this.applyUnavailableCoreMetrics();
+                    this.runInProgress.set(false);
+                },
+            });
+    }
+
+    runMemoryTest(): void {
+        if (!this.isMemoryScenarioSelected()) {
+            return;
+        }
+        this.runInProgress.set(true);
+        this.http
+            .get<ScenarioCoreResponse & { workload: string }>(
+                `/api/performance/memory?workload=${this.memoryWorkload()}`,
+            )
+            .subscribe({
+                next: (res) => {
+                    this.applyCoreMetrics(res);
+                    this.scenarioInfo.set({
+                        title: 'Memory Latency',
+                        text: 'Bounded in-memory allocation and traversal show memory pressure effects.',
+                        timestamp: res.timestamp,
+                    });
+                    this.runInProgress.set(false);
+                },
+                error: () => {
+                    this.applyUnavailableCoreMetrics();
+                    this.runInProgress.set(false);
+                },
+            });
+    }
+
+    setCpuLevel(value: string): void {
+        if (value === 'light' || value === 'medium' || value === 'heavy' || value === 'extreme') {
+            this.cpuLevel.set(value);
+        }
+    }
+
+    setNetworkDelay(value: string): void {
+        this.networkDelay.set(this.parsePositiveInt(value, 200));
+    }
+
+    setDiskSize(value: string): void {
+        if (value === 'small' || value === 'medium' || value === 'large') {
+            this.diskSize.set(value);
+        }
+    }
+
+    setMemoryWorkload(value: string): void {
+        if (value === 'small' || value === 'medium' || value === 'large') {
+            this.memoryWorkload.set(value);
+        }
+    }
+
     setArrivalRate(value: string): void {
         this.arrivalRate.set(this.parsePositiveInt(value, 80));
     }
@@ -344,5 +500,25 @@ export class AppComponent implements OnInit {
             return fallback;
         }
         return Math.floor(parsed);
+    }
+
+    private applyCoreMetrics(res: ScenarioCoreResponse): void {
+        this.metrics.set([
+            { label: 'Processing Time', value: `${res.processingTime} ms` },
+            { label: 'Total Latency', value: `${res.totalLatency} ms` },
+            { label: 'Throughput', value: `${res.throughput} req/s` },
+            { label: 'CPU', value: `${res.cpu.totalMs} ms (u:${res.cpu.userMs}, s:${res.cpu.systemMs})` },
+            { label: 'Memory', value: `${res.memory.heapUsedMb} MB heap / ${res.memory.rssMb} MB rss` },
+        ]);
+    }
+
+    private applyUnavailableCoreMetrics(): void {
+        this.metrics.set([
+            { label: 'Processing Time', value: 'N/A' },
+            { label: 'Total Latency', value: 'N/A' },
+            { label: 'Throughput', value: 'N/A' },
+            { label: 'CPU', value: 'N/A' },
+            { label: 'Memory', value: 'N/A' },
+        ]);
     }
 }

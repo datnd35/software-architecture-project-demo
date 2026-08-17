@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
 
 type BaselineMetrics = {
     requestCount: number;
@@ -36,12 +40,40 @@ type QueueSimulationTimeline = {
     activeWorkers: number[];
 };
 
+type CpuLevel = 'light' | 'medium' | 'heavy' | 'extreme';
+type DiskSize = 'small' | 'medium' | 'large';
+type MemoryWorkload = 'small' | 'medium' | 'large';
+
+type ResourceSnapshot = {
+    cpu: {
+        userMs: number;
+        systemMs: number;
+        totalMs: number;
+    };
+    memory: {
+        rssMb: number;
+        heapUsedMb: number;
+    };
+};
+
+type ScenarioResponse = {
+    scenario: string;
+    processingTime: number;
+    totalLatency: number;
+    throughput: number;
+    cpu: ResourceSnapshot['cpu'];
+    memory: ResourceSnapshot['memory'];
+    timestamp: string;
+};
+
 @Injectable()
 export class PerformanceService {
     private readonly startedAt = Date.now();
     private readonly durationsMs: number[] = [];
     private readonly maxSamples = 5000;
     private requestCount = 0;
+    private readonly scenarioStartedAt = Date.now();
+    private readonly scenarioRequestCounts: Record<string, number> = {};
 
     runQueueSimulation(input: QueueSimulationInput): {
         scenario: 'queue-buildup';
@@ -154,6 +186,147 @@ export class PerformanceService {
         };
     }
 
+    runCpuLatency(levelInput: string): ScenarioResponse & { level: CpuLevel } {
+        const level = this.normalizeCpuLevel(levelInput);
+        const workDurationMap: Record<CpuLevel, number> = {
+            light: 8,
+            medium: 20,
+            heavy: 45,
+            extreme: 90,
+        };
+
+        const cpuStart = process.cpuUsage();
+        const start = performance.now();
+        const targetDurationMs = workDurationMap[level];
+
+        while (performance.now() - start < targetDurationMs) {
+            Math.sqrt(Math.random() * 1_000_000);
+        }
+
+        const processingTime = Number((performance.now() - start).toFixed(3));
+        const snapshot = this.captureSnapshot(cpuStart);
+
+        return {
+            scenario: 'cpu-latency',
+            level,
+            processingTime,
+            totalLatency: processingTime,
+            throughput: this.recordScenarioThroughput('cpu-latency'),
+            cpu: snapshot.cpu,
+            memory: snapshot.memory,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    async runNetworkLatency(delayInput: number): Promise<ScenarioResponse & { delay: number }> {
+        const allowed = [0, 50, 100, 200, 500, 1000] as const;
+        const delay = this.closestAllowedDelay(delayInput, allowed);
+        const cpuStart = process.cpuUsage();
+
+        const start = performance.now();
+        const processingStart = performance.now();
+        const payload = { ok: true, at: Date.now() };
+        const processingTime = Number((performance.now() - processingStart).toFixed(3));
+
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        void payload;
+
+        const totalLatency = Number((performance.now() - start).toFixed(3));
+        const snapshot = this.captureSnapshot(cpuStart);
+
+        return {
+            scenario: 'network-latency',
+            delay,
+            processingTime,
+            totalLatency,
+            throughput: this.recordScenarioThroughput('network-latency'),
+            cpu: snapshot.cpu,
+            memory: snapshot.memory,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    async runDiskLatency(sizeInput: string): Promise<ScenarioResponse & { size: DiskSize }> {
+        const size = this.normalizeDiskSize(sizeInput);
+        const byteMap: Record<DiskSize, number> = {
+            small: 64 * 1024,
+            medium: 512 * 1024,
+            large: 2 * 1024 * 1024,
+        };
+
+        const bytes = byteMap[size];
+        const tempPath = join(tmpdir(), `pel-disk-${randomUUID()}.tmp`);
+        const buffer = Buffer.alloc(bytes, 7);
+
+        const cpuStart = process.cpuUsage();
+        const start = performance.now();
+        let processingTime = 0;
+
+        try {
+            const processingStart = performance.now();
+            await fs.writeFile(tempPath, buffer);
+            await fs.readFile(tempPath);
+            processingTime = Number((performance.now() - processingStart).toFixed(3));
+        } finally {
+            try {
+                await fs.unlink(tempPath);
+            } catch {
+                // best effort cleanup
+            }
+        }
+
+        const totalLatency = Number((performance.now() - start).toFixed(3));
+        const snapshot = this.captureSnapshot(cpuStart);
+
+        return {
+            scenario: 'disk-latency',
+            size,
+            processingTime,
+            totalLatency,
+            throughput: this.recordScenarioThroughput('disk-latency'),
+            cpu: snapshot.cpu,
+            memory: snapshot.memory,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    runMemoryLatency(workloadInput: string): ScenarioResponse & { workload: MemoryWorkload } {
+        const workload = this.normalizeMemoryWorkload(workloadInput);
+        const sizeMap: Record<MemoryWorkload, number> = {
+            small: 250_000,
+            medium: 750_000,
+            large: 1_500_000,
+        };
+
+        const cpuStart = process.cpuUsage();
+        const start = performance.now();
+        const processingStart = performance.now();
+
+        const length = sizeMap[workload];
+        const arr = new Float64Array(length);
+        let checksum = 0;
+        for (let i = 0; i < arr.length; i += 1) {
+            arr[i] = (i % 1000) * 0.5;
+            checksum += arr[i];
+        }
+
+        const processingTime = Number((performance.now() - processingStart).toFixed(3));
+        void checksum;
+        const totalLatency = Number((performance.now() - start).toFixed(3));
+        const snapshot = this.captureSnapshot(cpuStart);
+
+        return {
+            scenario: 'memory-latency',
+            workload,
+            processingTime,
+            totalLatency,
+            throughput: this.recordScenarioThroughput('memory-latency'),
+            cpu: snapshot.cpu,
+            memory: snapshot.memory,
+            timestamp: new Date().toISOString(),
+        };
+    }
+
     async runBaseline(): Promise<{
         scenario: 'baseline';
         processingTimeMs: number;
@@ -219,5 +392,68 @@ export class PerformanceService {
             return min;
         }
         return Math.min(max, Math.max(min, Math.floor(value)));
+    }
+
+    private normalizeCpuLevel(level: string): CpuLevel {
+        if (level === 'light' || level === 'medium' || level === 'heavy' || level === 'extreme') {
+            return level;
+        }
+        return 'light';
+    }
+
+    private normalizeDiskSize(size: string): DiskSize {
+        if (size === 'small' || size === 'medium' || size === 'large') {
+            return size;
+        }
+        return 'medium';
+    }
+
+    private normalizeMemoryWorkload(workload: string): MemoryWorkload {
+        if (workload === 'small' || workload === 'medium' || workload === 'large') {
+            return workload;
+        }
+        return 'medium';
+    }
+
+    private closestAllowedDelay(value: number, allowed: readonly number[]): number {
+        if (!Number.isFinite(value)) {
+            return allowed[0];
+        }
+        let nearest = allowed[0];
+        let minDiff = Math.abs(value - nearest);
+        for (const item of allowed) {
+            const diff = Math.abs(value - item);
+            if (diff < minDiff) {
+                nearest = item;
+                minDiff = diff;
+            }
+        }
+        return nearest;
+    }
+
+    private recordScenarioThroughput(scenario: string): number {
+        const currentCount = (this.scenarioRequestCounts[scenario] ?? 0) + 1;
+        this.scenarioRequestCounts[scenario] = currentCount;
+        const elapsedSeconds = Math.max((Date.now() - this.scenarioStartedAt) / 1000, 0.001);
+        return Number((currentCount / elapsedSeconds).toFixed(3));
+    }
+
+    private captureSnapshot(cpuStart: NodeJS.CpuUsage): ResourceSnapshot {
+        const cpuDiff = process.cpuUsage(cpuStart);
+        const userMs = Number((cpuDiff.user / 1000).toFixed(3));
+        const systemMs = Number((cpuDiff.system / 1000).toFixed(3));
+        const memoryUsage = process.memoryUsage();
+
+        return {
+            cpu: {
+                userMs,
+                systemMs,
+                totalMs: Number((userMs + systemMs).toFixed(3)),
+            },
+            memory: {
+                rssMb: Number((memoryUsage.rss / 1024 / 1024).toFixed(3)),
+                heapUsedMb: Number((memoryUsage.heapUsed / 1024 / 1024).toFixed(3)),
+            },
+        };
     }
 }

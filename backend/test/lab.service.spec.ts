@@ -1,19 +1,29 @@
-import { LabService } from '../src/services/lab.service';
-import { MetricsService } from '../src/services/metrics.service';
-import { StorageService } from '../src/services/storage.service';
+import { PerformanceService } from '../src/performance/performance.service';
 
-describe('LabService scaling models', () => {
-    const service = new LabService(new MetricsService(), new StorageService());
+describe('PerformanceService scenarios', () => {
+    const service = new PerformanceService();
 
-    it('calculates Amdahl speedup', () => {
-        const result = service.amdahl(0.9, 4);
-        expect(result.speedup).toBeGreaterThan(3);
-        expect(result.speedup).toBeLessThan(4);
+    it('runs cpu scenario with valid level', () => {
+        const result = service.runCpuLatency('medium');
+        expect(result.scenario).toBe('cpu-latency');
+        expect(result.processingTime).toBeGreaterThan(0);
     });
 
-    it('calculates USL relative capacity', () => {
-        const result = service.usl(8, 0.02, 0.01);
-        expect(result.relativeCapacity).toBeGreaterThan(0);
-        expect(result.relativeCapacity).toBeLessThan(8);
+    it('runs network scenario with allowed delay bucket', async () => {
+        const result = await service.runNetworkLatency(210);
+        expect(result.scenario).toBe('network-latency');
+        expect([0, 50, 100, 200, 500, 1000]).toContain(result.delay);
+    });
+
+    it('runs disk scenario and returns bounded metrics', async () => {
+        const result = await service.runDiskLatency('small');
+        expect(result.scenario).toBe('disk-latency');
+        expect(result.processingTime).toBeGreaterThan(0);
+    });
+
+    it('runs memory scenario and returns throughput', () => {
+        const result = service.runMemoryLatency('medium');
+        expect(result.scenario).toBe('memory-latency');
+        expect(result.throughput).toBeGreaterThan(0);
     });
 });

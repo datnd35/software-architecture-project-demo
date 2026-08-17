@@ -72,6 +72,77 @@
 
             <p *ngIf="queueInfo()" class="meta">Last run: {{ queueInfo()?.timestamp }}</p>
         </div>
+
+        <div *ngIf="isCpuScenarioSelected()" class="queue-info">
+            <h3>Scenario: CPU Latency</h3>
+            <p>Increase CPU intensity to observe processing latency growth.</p>
+            <label class="inline-control">
+                Level
+                <select [value]="cpuLevel()" (change)="setCpuLevel($any($event.target).value)">
+                    <option value="light">light</option>
+                    <option value="medium">medium</option>
+                    <option value="heavy">heavy</option>
+                    <option value="extreme">extreme</option>
+                </select>
+            </label>
+            <button class="run-btn" (click)="runCpuTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+        </div>
+
+        <div *ngIf="isNetworkScenarioSelected()" class="queue-info">
+            <h3>Scenario: Network Latency</h3>
+            <p>Inject transport delay to model network-induced latency.</p>
+            <label class="inline-control">
+                Delay (ms)
+                <select [value]="networkDelay()" (change)="setNetworkDelay($any($event.target).value)">
+                    <option [value]="0">0</option>
+                    <option [value]="50">50</option>
+                    <option [value]="100">100</option>
+                    <option [value]="200">200</option>
+                    <option [value]="500">500</option>
+                    <option [value]="1000">1000</option>
+                </select>
+            </label>
+            <button class="run-btn" (click)="runNetworkTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+        </div>
+
+        <div *ngIf="isDiskScenarioSelected()" class="queue-info">
+            <h3>Scenario: Disk Latency</h3>
+            <p>Measure temporary file I/O to illustrate storage overhead.</p>
+            <label class="inline-control">
+                Size
+                <select [value]="diskSize()" (change)="setDiskSize($any($event.target).value)">
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large">large</option>
+                </select>
+            </label>
+            <button class="run-btn" (click)="runDiskTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+        </div>
+
+        <div *ngIf="isMemoryScenarioSelected()" class="queue-info">
+            <h3>Scenario: Memory Latency</h3>
+            <p>Run bounded memory workloads to observe heap and latency behavior.</p>
+            <label class="inline-control">
+                Workload
+                <select [value]="memoryWorkload()" (change)="setMemoryWorkload($any($event.target).value)">
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large">large</option>
+                </select>
+            </label>
+            <button class="run-btn" (click)="runMemoryTest()" [disabled]="runInProgress()">
+                {{ runInProgress() ? 'Running...' : 'Run Test' }}
+            </button>
+        </div>
+
+        <p *ngIf="scenarioInfo()" class="meta">{{ scenarioInfo()?.text }} · Last run: {{ scenarioInfo()?.timestamp }}
+        </p>
     </section>
 
     <section class="panel">

@@ -24,4 +24,24 @@ export class PerformanceController {
             durationSeconds: Number(durationSeconds ?? 20),
         });
     }
+
+    @Get('cpu')
+    cpu(@Query('level') level?: string) {
+        return this.performanceService.runCpuLatency(level ?? 'light');
+    }
+
+    @Get('network')
+    network(@Query('delay') delay?: string) {
+        return this.performanceService.runNetworkLatency(Number(delay ?? 200));
+    }
+
+    @Get('disk')
+    disk(@Query('size') size?: string) {
+        return this.performanceService.runDiskLatency(size ?? 'medium');
+    }
+
+    @Get('memory')
+    memory(@Query('workload') workload?: string) {
+        return this.performanceService.runMemoryLatency(workload ?? 'medium');
+    }
 }
