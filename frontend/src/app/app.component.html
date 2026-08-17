@@ -1,0 +1,19 @@
+<main class="container">
+    <h1>{{ title }}</h1>
+
+    <p>
+        Educational playground for efficiency, latency, throughput, queue buildup,
+        indexing, caching, lock contention, CAS, Amdahl's Law, and USL.
+    </p>
+
+    <section class="grid">
+        <button *ngFor="let demo of demos" (click)="run(demo)">
+            Run {{ demo.name }}
+        </button>
+    </section>
+
+    <section class="output">
+        <h2>Latest output {{ loading ? '(running...)' : '' }}</h2>
+        <pre>{{ output | json }}</pre>
+    </section>
+</main>
