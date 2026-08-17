@@ -82,6 +82,29 @@ h2 {
   cursor: not-allowed;
 }
 
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.secondary-btn {
+  margin-top: 0.55rem;
+  border: 1px solid #374151;
+  color: #111827;
+  background: #fff;
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .meta {
   font-size: 0.86rem;
 }
@@ -101,10 +124,12 @@ h2 {
   color: #374151;
 }
 
-.control-grid input {
+.control-grid input,
+.control-grid select {
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0.42rem 0.55rem;
+  background: #fff;
 }
 
 .inline-control {
@@ -179,6 +204,33 @@ h2 {
   font-size: 0.93rem;
 }
 
+.cache-visual-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(230px, 1fr));
+  gap: 0.6rem;
+}
+
+.cache-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fafafa;
+}
+
+.cache-card h4 {
+  margin: 0 0 0.35rem;
+}
+
+.cache-card p {
+  margin: 0.15rem 0;
+}
+
+.cache-card .sub {
+  color: #4f46e5;
+  font-weight: 600;
+}
+
 @media (max-width: 920px) {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(140px, 1fr));
@@ -189,6 +241,10 @@ h2 {
   }
 
   .control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cache-visual-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -141,6 +141,49 @@
             </button>
         </div>
 
+        <div *ngIf="isCachingScenarioSelected()" class="queue-info">
+            <h3>Scenario: Caching (Redis)</h3>
+
+            <div class="control-grid">
+                <label>
+                    Cache Status
+                    <select [value]="cacheMode()" (change)="setCacheMode($any($event.target).value)">
+                        <option value="off">OFF</option>
+                        <option value="on">ON</option>
+                    </select>
+                </label>
+
+                <label>
+                    User ID
+                    <input type="number" [value]="cacheUserId()" min="1"
+                        (input)="setCacheUserId($any($event.target).value)" />
+                </label>
+            </div>
+
+            <div class="button-row">
+                <button class="run-btn" (click)="runCacheTest()" [disabled]="runInProgress()">
+                    {{ runInProgress() ? 'Running...' : 'Run Test' }}
+                </button>
+                <button class="secondary-btn" (click)="clearCache()" [disabled]="runInProgress()">Clear Cache</button>
+            </div>
+
+            <div class="cache-visual-grid">
+                <article class="cache-card">
+                    <h4>Without Cache</h4>
+                    <p>Request → API → DB → Response</p>
+                </article>
+                <article class="cache-card">
+                    <h4>With Cache</h4>
+                    <p>Request → API → Redis → Response</p>
+                    <p class="sub">↓ Cache Hit</p>
+                </article>
+            </div>
+
+            <p class="meta" *ngIf="cacheLastUser()">
+                Last source: {{ cacheLastSource() }} · User: {{ cacheLastUser()?.name }} ({{ cacheLastUser()?.email }})
+            </p>
+        </div>
+
         <p *ngIf="scenarioInfo()" class="meta">{{ scenarioInfo()?.text }} · Last run: {{ scenarioInfo()?.timestamp }}
         </p>
     </section>

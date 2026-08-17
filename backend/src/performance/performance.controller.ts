@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { PerformanceService } from './performance.service';
 
 @Controller('performance')
@@ -43,5 +43,15 @@ export class PerformanceController {
     @Get('memory')
     memory(@Query('workload') workload?: string) {
         return this.performanceService.runMemoryLatency(workload ?? 'medium');
+    }
+
+    @Get('cache/user/:id')
+    cacheUser(@Param('id') id: string, @Query('cache') cache?: string) {
+        return this.performanceService.runCacheUserExperiment(Number(id), cache ?? 'on');
+    }
+
+    @Post('cache/clear')
+    clearCache() {
+        return this.performanceService.clearCacheExperiment();
     }
 }

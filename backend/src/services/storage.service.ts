@@ -7,6 +7,7 @@ export class StorageService {
     private readonly pool: Pool;
     private readonly redis: Redis;
     private redisConnected = false;
+    private cacheTableReady = false;
 
     constructor() {
         this.pool = new Pool({
@@ -92,5 +93,80 @@ export class StorageService {
             const elapsedMs = Math.round((performance.now() - started) * 100) / 100;
             return { key, hit: false, value: 'unavailable', elapsedMs, details: `redis unavailable: ${(error as Error).message}` };
         }
+    }
+
+    async getCacheValue(key: string): Promise<{ value: string | null; latencyMs: number }> {
+        const started = performance.now();
+        if (!this.redisConnected) {
+            await this.redis.connect();
+            this.redisConnected = true;
+        }
+        const value = await this.redis.get(key);
+        const latencyMs = Number((performance.now() - started).toFixed(3));
+        return { value, latencyMs };
+    }
+
+    async setCacheValue(key: string, value: string, ttlSeconds: number): Promise<{ latencyMs: number }> {
+        const started = performance.now();
+        if (!this.redisConnected) {
+            await this.redis.connect();
+            this.redisConnected = true;
+        }
+        await this.redis.setex(key, ttlSeconds, value);
+        const latencyMs = Number((performance.now() - started).toFixed(3));
+        return { latencyMs };
+    }
+
+    async clearCacheByPrefix(prefix: string): Promise<number> {
+        if (!this.redisConnected) {
+            await this.redis.connect();
+            this.redisConnected = true;
+        }
+
+        const keys = await this.redis.keys(`${prefix}*`);
+        if (keys.length === 0) {
+            return 0;
+        }
+
+        await this.redis.del(...keys);
+        return keys.length;
+    }
+
+    async getUserById(id: number): Promise<{ user: { id: number; name: string; email: string }; latencyMs: number }> {
+        await this.ensureCacheUsersTable();
+        const started = performance.now();
+
+        const { rows } = await this.pool.query<{ id: number; name: string; email: string }>(
+            'SELECT id, name, email FROM cache_users WHERE id = $1 LIMIT 1',
+            [id],
+        );
+
+        let user = rows[0];
+        if (!user) {
+            const generated = {
+                id,
+                name: `User ${id}`,
+                email: `user${id}@pel.local`,
+            };
+            await this.pool.query(
+                'INSERT INTO cache_users(id, name, email) VALUES($1, $2, $3) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email',
+                [generated.id, generated.name, generated.email],
+            );
+            user = generated;
+        }
+
+        const latencyMs = Number((performance.now() - started).toFixed(3));
+        return { user, latencyMs };
+    }
+
+    private async ensureCacheUsersTable(): Promise<void> {
+        if (this.cacheTableReady) {
+            return;
+        }
+
+        await this.pool.query(
+            'CREATE TABLE IF NOT EXISTS cache_users(id INT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)',
+        );
+        this.cacheTableReady = true;
     }
 }

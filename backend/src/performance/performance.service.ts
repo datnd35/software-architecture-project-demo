@@ -3,6 +3,8 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { StorageService } from '../services/storage.service';
+import { MetricsService } from '../metrics/metrics.service';
 
 type BaselineMetrics = {
     requestCount: number;
@@ -66,6 +68,8 @@ type ScenarioResponse = {
     timestamp: string;
 };
 
+type CacheMode = 'on' | 'off';
+
 @Injectable()
 export class PerformanceService {
     private readonly startedAt = Date.now();
@@ -74,6 +78,145 @@ export class PerformanceService {
     private requestCount = 0;
     private readonly scenarioStartedAt = Date.now();
     private readonly scenarioRequestCounts: Record<string, number> = {};
+    private readonly cacheTtlSeconds: number;
+
+    constructor(
+        private readonly storageService: StorageService,
+        private readonly metricsService: MetricsService,
+    ) {
+        const ttl = Number(process.env.CACHE_TTL_SECONDS ?? 30);
+        this.cacheTtlSeconds = Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : 30;
+    }
+
+    async runCacheUserExperiment(idInput: number, modeInput: string): Promise<{
+        scenario: 'caching';
+        cacheStatus: 'ON' | 'OFF';
+        source: 'redis' | 'database';
+        user: { id: number; name: string; email: string };
+        ttlSeconds: number;
+        processingTime: number;
+        totalLatency: number;
+        throughput: number;
+        cpu: ResourceSnapshot['cpu'];
+        memory: ResourceSnapshot['memory'];
+        metrics: {
+            cache_hits_total: number;
+            cache_misses_total: number;
+            cache_hit_rate: number;
+            database_queries: number;
+            redis_latency: number;
+            database_latency: number;
+            total_request_latency: number;
+        };
+        timestamp: string;
+    }> {
+        const id = this.clamp(idInput, 1, 1_000_000);
+        const mode: CacheMode = this.normalizeCacheMode(modeInput);
+        const cacheEnabled = mode === 'on';
+        const key = `pel:user:${id}`;
+        const cpuStart = process.cpuUsage();
+        const start = performance.now();
+
+        let redisLatency = 0;
+        let databaseLatency = 0;
+        let source: 'redis' | 'database' = 'database';
+        let user: { id: number; name: string; email: string };
+
+        if (cacheEnabled) {
+            try {
+                const cacheRead = await this.storageService.getCacheValue(key);
+                redisLatency += cacheRead.latencyMs;
+                this.metricsService.observeRedisLatency(cacheRead.latencyMs);
+
+                if (cacheRead.value) {
+                    user = JSON.parse(cacheRead.value) as { id: number; name: string; email: string };
+                    this.metricsService.recordCacheHit();
+                    source = 'redis';
+
+                    const processingTime = Number((performance.now() - start).toFixed(3));
+                    const snapshot = this.captureSnapshot(cpuStart);
+                    const throughput = this.recordScenarioThroughput('caching');
+                    this.metricsService.observeTotalRequestLatency(processingTime);
+
+                    const stat = this.metricsService.getCacheStats();
+                    return {
+                        scenario: 'caching',
+                        cacheStatus: 'ON',
+                        source,
+                        user,
+                        ttlSeconds: this.cacheTtlSeconds,
+                        processingTime,
+                        totalLatency: processingTime,
+                        throughput,
+                        cpu: snapshot.cpu,
+                        memory: snapshot.memory,
+                        metrics: {
+                            ...stat,
+                            redis_latency: Number(redisLatency.toFixed(3)),
+                            database_latency: 0,
+                            total_request_latency: processingTime,
+                        },
+                        timestamp: new Date().toISOString(),
+                    };
+                }
+            } catch {
+                // fall through to DB path if Redis unavailable
+            }
+        }
+
+        this.metricsService.recordCacheMiss();
+        const dbResult = await this.storageService.getUserById(id);
+        databaseLatency = dbResult.latencyMs;
+        this.metricsService.recordDatabaseQuery();
+        this.metricsService.observeDatabaseLatency(databaseLatency);
+        user = dbResult.user;
+
+        if (cacheEnabled) {
+            try {
+                const cacheWrite = await this.storageService.setCacheValue(key, JSON.stringify(user), this.cacheTtlSeconds);
+                redisLatency += cacheWrite.latencyMs;
+                this.metricsService.observeRedisLatency(cacheWrite.latencyMs);
+            } catch {
+                // ignore cache write failure, still return DB result
+            }
+        }
+
+        const totalLatency = Number((performance.now() - start).toFixed(3));
+        const snapshot = this.captureSnapshot(cpuStart);
+        const throughput = this.recordScenarioThroughput('caching');
+        this.metricsService.observeTotalRequestLatency(totalLatency);
+        const stat = this.metricsService.getCacheStats();
+
+        return {
+            scenario: 'caching',
+            cacheStatus: cacheEnabled ? 'ON' : 'OFF',
+            source: 'database',
+            user,
+            ttlSeconds: this.cacheTtlSeconds,
+            processingTime: databaseLatency,
+            totalLatency,
+            throughput,
+            cpu: snapshot.cpu,
+            memory: snapshot.memory,
+            metrics: {
+                ...stat,
+                redis_latency: Number(redisLatency.toFixed(3)),
+                database_latency: Number(databaseLatency.toFixed(3)),
+                total_request_latency: totalLatency,
+            },
+            timestamp: new Date().toISOString(),
+        };
+    }
+
+    async clearCacheExperiment(): Promise<{ clearedKeys: number; status: 'ok'; timestamp: string }> {
+        const clearedKeys = await this.storageService.clearCacheByPrefix('pel:user:');
+        this.metricsService.resetCacheStats();
+        return {
+            clearedKeys,
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+        };
+    }
 
     runQueueSimulation(input: QueueSimulationInput): {
         scenario: 'queue-buildup';
@@ -413,6 +556,10 @@ export class PerformanceService {
             return workload;
         }
         return 'medium';
+    }
+
+    private normalizeCacheMode(mode: string): CacheMode {
+        return mode === 'off' ? 'off' : 'on';
     }
 
     private closestAllowedDelay(value: number, allowed: readonly number[]): number {

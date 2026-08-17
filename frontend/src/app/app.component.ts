@@ -68,6 +68,36 @@ type ScenarioCoreResponse = {
     timestamp: string;
 };
 
+type CacheApiResponse = {
+    scenario: 'caching';
+    cacheStatus: 'ON' | 'OFF';
+    source: 'redis' | 'database';
+    user: { id: number; name: string; email: string };
+    ttlSeconds: number;
+    processingTime: number;
+    totalLatency: number;
+    throughput: number;
+    cpu: {
+        userMs: number;
+        systemMs: number;
+        totalMs: number;
+    };
+    memory: {
+        rssMb: number;
+        heapUsedMb: number;
+    };
+    metrics: {
+        cache_hits_total: number;
+        cache_misses_total: number;
+        cache_hit_rate: number;
+        database_queries: number;
+        redis_latency: number;
+        database_latency: number;
+        total_request_latency: number;
+    };
+    timestamp: string;
+};
+
 @Component({
     selector: 'app-root',
     standalone: true,
@@ -89,7 +119,7 @@ export class AppComponent implements OnInit {
         { id: 'disk-latency', label: 'Disk Latency', enabled: true },
         { id: 'memory-latency', label: 'Memory Latency', enabled: true },
         { id: 'database-index', label: 'Database Index', enabled: false },
-        { id: 'caching', label: 'Caching', enabled: false },
+        { id: 'caching', label: 'Caching', enabled: true },
         { id: 'concurrency', label: 'Concurrency', enabled: false },
         { id: 'lock-contention', label: 'Lock Contention', enabled: false },
         { id: 'cas', label: 'CAS', enabled: false },
@@ -110,6 +140,7 @@ export class AppComponent implements OnInit {
     readonly isNetworkScenarioSelected = computed(() => this.selectedScenarioId() === 'network-latency');
     readonly isDiskScenarioSelected = computed(() => this.selectedScenarioId() === 'disk-latency');
     readonly isMemoryScenarioSelected = computed(() => this.selectedScenarioId() === 'memory-latency');
+    readonly isCachingScenarioSelected = computed(() => this.selectedScenarioId() === 'caching');
 
     readonly systemStatus = signal<SystemStatusItem[]>([
         { label: 'Backend', healthy: true },
@@ -134,6 +165,10 @@ export class AppComponent implements OnInit {
     readonly networkDelay = signal(200);
     readonly diskSize = signal<'small' | 'medium' | 'large'>('medium');
     readonly memoryWorkload = signal<'small' | 'medium' | 'large'>('medium');
+    readonly cacheMode = signal<'on' | 'off'>('on');
+    readonly cacheUserId = signal(1);
+    readonly cacheLastSource = signal<'redis' | 'database' | '-'>('-');
+    readonly cacheLastUser = signal<{ id: number; name: string; email: string } | null>(null);
 
     readonly arrivalRate = signal(80);
     readonly processingCapacity = signal(12);
@@ -206,6 +241,17 @@ export class AppComponent implements OnInit {
                 { label: 'Throughput', value: '-' },
                 { label: 'CPU', value: '-' },
                 { label: 'Memory', value: '-' },
+            ]);
+        }
+
+        if (id === 'caching') {
+            this.metrics.set([
+                { label: 'Cache Status', value: '-' },
+                { label: 'Cache Hit Rate', value: '-' },
+                { label: 'Cache Hits', value: '-' },
+                { label: 'Cache Misses', value: '-' },
+                { label: 'DB Queries', value: '-' },
+                { label: 'Latency', value: '-' },
             ]);
         }
     }
@@ -402,6 +448,85 @@ export class AppComponent implements OnInit {
                     this.runInProgress.set(false);
                 },
             });
+    }
+
+    runCacheTest(): void {
+        if (!this.isCachingScenarioSelected()) {
+            return;
+        }
+
+        this.runInProgress.set(true);
+        const url = `/api/performance/cache/user/${this.cacheUserId()}?cache=${this.cacheMode()}`;
+        this.http.get<CacheApiResponse>(url).subscribe({
+            next: (res) => {
+                this.metrics.set([
+                    { label: 'Cache Status', value: res.cacheStatus },
+                    { label: 'Cache Hit Rate', value: `${(res.metrics.cache_hit_rate * 100).toFixed(2)}%` },
+                    { label: 'Cache Hits', value: String(res.metrics.cache_hits_total) },
+                    { label: 'Cache Misses', value: String(res.metrics.cache_misses_total) },
+                    { label: 'DB Queries', value: String(res.metrics.database_queries) },
+                    { label: 'Latency', value: `${res.metrics.total_request_latency} ms` },
+                ]);
+
+                this.cacheLastSource.set(res.source);
+                this.cacheLastUser.set(res.user);
+                this.scenarioInfo.set({
+                    title: 'Caching',
+                    text: `Source: ${res.source.toUpperCase()} · Redis latency: ${res.metrics.redis_latency} ms · DB latency: ${res.metrics.database_latency} ms`,
+                    timestamp: res.timestamp,
+                });
+
+                this.runInProgress.set(false);
+            },
+            error: () => {
+                this.metrics.set([
+                    { label: 'Cache Status', value: 'N/A' },
+                    { label: 'Cache Hit Rate', value: 'N/A' },
+                    { label: 'Cache Hits', value: 'N/A' },
+                    { label: 'Cache Misses', value: 'N/A' },
+                    { label: 'DB Queries', value: 'N/A' },
+                    { label: 'Latency', value: 'N/A' },
+                ]);
+                this.runInProgress.set(false);
+            },
+        });
+    }
+
+    clearCache(): void {
+        this.runInProgress.set(true);
+        this.http.post<{ status: string; clearedKeys: number; timestamp: string }>('/api/performance/cache/clear', {}).subscribe({
+            next: (res) => {
+                this.scenarioInfo.set({
+                    title: 'Caching',
+                    text: `Cache cleared: ${res.clearedKeys} keys removed`,
+                    timestamp: res.timestamp,
+                });
+                this.cacheLastSource.set('-');
+                this.cacheLastUser.set(null);
+                this.metrics.set([
+                    { label: 'Cache Status', value: this.cacheMode().toUpperCase() },
+                    { label: 'Cache Hit Rate', value: '0.00%' },
+                    { label: 'Cache Hits', value: '0' },
+                    { label: 'Cache Misses', value: '0' },
+                    { label: 'DB Queries', value: '0' },
+                    { label: 'Latency', value: '-' },
+                ]);
+                this.runInProgress.set(false);
+            },
+            error: () => {
+                this.runInProgress.set(false);
+            },
+        });
+    }
+
+    setCacheMode(value: string): void {
+        if (value === 'on' || value === 'off') {
+            this.cacheMode.set(value);
+        }
+    }
+
+    setCacheUserId(value: string): void {
+        this.cacheUserId.set(this.parsePositiveInt(value, 1));
     }
 
     setCpuLevel(value: string): void {
