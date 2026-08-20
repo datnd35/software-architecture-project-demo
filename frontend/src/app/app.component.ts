@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { NgFor, NgIf } from '@angular/common';
 import { ScenarioSelectorComponent } from './components/scenario-selector/scenario-selector.component';
@@ -198,7 +198,22 @@ export class AppComponent implements OnInit {
                     { label: 'Redis', healthy: redisUp },
                 ]);
             },
-            error: () => {
+            error: (err: HttpErrorResponse) => {
+                const payload =
+                    typeof err.error === 'object' && err.error !== null
+                        ? (err.error as { status?: string; postgres?: string; redis?: string })
+                        : null;
+
+                if (payload) {
+                    const backendUp = err.status > 0;
+                    this.systemStatus.set([
+                        { label: 'Backend', healthy: backendUp },
+                        { label: 'PostgreSQL', healthy: payload.postgres === 'up' },
+                        { label: 'Redis', healthy: payload.redis === 'up' },
+                    ]);
+                    return;
+                }
+
                 this.systemStatus.set([
                     { label: 'Backend', healthy: false },
                     { label: 'PostgreSQL', healthy: false },
